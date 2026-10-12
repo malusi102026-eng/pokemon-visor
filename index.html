@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokédex 3D</title>
+<style>
+/* Layout: lienzo 3D a pantalla completa + barra lateral flotante tipo ficha de taller.
+   Sin dependencias: ni librerías ni fuentes externas. */
+:root{
+  --bg:#14171a; --bg2:#1d2226; --panel:rgba(29,34,38,.92); --line:#323a40;
+  --fg:#e7ebe8; --muted:#8d9893; --accent:#f0a33a; --accent-ink:#1a1206;
+  --f-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:14px;overflow:hidden}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#gl:active{cursor:grabbing}
+
+.panel{position:fixed;top:16px;left:16px;width:280px;max-width:calc(100% - 32px);
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;
+  display:flex;flex-direction:column;gap:14px;backdrop-filter:blur(6px)}
+.eyebrow{font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0}
+h1{margin:2px 0 0;font-size:20px;line-height:1.2;text-wrap:balance}
+.file{font-family:var(--f-mono);font-size:12px;color:var(--muted);margin:4px 0 0;word-break:break-all}
+
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}
+dt{color:var(--muted)}
+dd{margin:0;text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,label.btn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--bg2);
+  color:var(--fg);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover,label.btn:hover{border-color:var(--muted)}
+button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:focus-visible,label.btn:focus-within,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.swatches{display:flex;gap:6px}
+.sw{width:26px;height:26px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer}
+.sw[aria-pressed="true"]{border-color:var(--fg)}
+input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+
+.hint{font-size:12px;color:var(--muted);line-height:1.5;margin:0}
+.credit{font-size:11px;color:var(--muted);margin:0;line-height:1.5}
+.credit a{color:var(--muted)}
+.slots{display:flex;flex-wrap:wrap;gap:6px}
+.slot{display:flex;align-items:center;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:3px 7px 3px 3px;cursor:pointer;font-family:var(--f-mono);font-size:12px}
+.slot input{width:24px;height:24px;border:0;padding:0;background:none;cursor:pointer}
+.slot input::-webkit-color-swatch-wrapper{padding:0}
+.slot input::-webkit-color-swatch{border:none;border-radius:5px}
+.slot input::-moz-color-swatch{border:none;border-radius:5px}
+.note{font-size:12px;line-height:1.45;color:var(--accent);margin:0}
+.msg{font-size:12px;color:var(--accent);margin:0;min-height:1em}
+
+.types{display:flex;gap:6px;flex-wrap:wrap}
+.type{font-family:var(--f-mono);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:3px 9px;border-radius:999px;color:#0c1512}
+.desc{margin:0;line-height:1.5;font-size:13px}
+.stats h2{margin:0 0 8px;font-family:var(--f-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;display:flex;justify-content:space-between}
+.srow{display:grid;grid-template-columns:70px 30px 1fr;gap:8px;align-items:center;font-size:12px;margin-block:4px}
+.srow span:nth-child(2){font-family:var(--f-mono);text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.emptytxt{margin:0;line-height:1.5;font-size:13px}
+.links{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.links a{font-family:var(--f-mono);font-size:12px;color:var(--fg);text-decoration:none;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.links a:hover{border-color:var(--accent);color:var(--accent)}
+.drop{position:fixed;inset:12px;border:2px dashed var(--accent);border-radius:16px;display:grid;place-items:center;
+  font-size:18px;font-weight:600;color:var(--accent);background:rgba(20,23,26,.7);pointer-events:none}
+
+@media (max-width:600px){
+  .panel{top:auto;bottom:16px;left:16px;right:16px;width:auto;padding:12px;gap:10px}
+  .hint,.desc,.stats{display:none}
+  h1{font-size:17px}
+}
+</style>
+</head>
+<body>
+<canvas id="gl" aria-label="Vista 3D del modelo. Arrastra para girar, rueda o pellizco para acercar."></canvas>
+
+<aside class="panel">
+  <div>
+    <p class="eyebrow" id="dexNo">Nº 000</p>
+    <h1 id="title">Cargando…</h1>
+    <p class="file" id="cat">—</p>
+  </div>
+  <div class="empty" id="empty" hidden>
+    <p class="emptytxt" id="emptyMsg"></p>
+    <p class="file">Pokémon disponibles:</p>
+    <div class="links" id="links"></div>
+  </div>
+  <div class="types" id="types"></div>
+  <p class="desc" id="desc"></p>
+  <dl>
+    <dt>Altura</dt><dd id="height">—</dd>
+    <dt>Peso</dt><dd id="weight">—</dd>
+  </dl>
+  <div class="stats">
+    <h2><span>Estadísticas base</span><span id="total">Total —</span></h2>
+    <div id="statRows"></div>
+  </div>
+  <p class="msg" id="msg" role="status"></p>
+  <p class="hint">Arrastra para girarlo a mano · rueda o pellizco para acercar.</p>
+</aside>
+
+
+<script>
+"use strict";
+/* =========================================================
+   Visor STL sin dependencias
+   1) Lee STL (binario o ASCII)  2) Lo centra sobre la "cama"
+   3) Lo dibuja con WebGL        4) Cámara orbital con mouse/touch
+   ========================================================= */
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", {antialias:true});
+const $ = id => document.getElementById(id);
+
+if (!gl) { $("title").textContent = "Tu navegador no soporta WebGL"; throw new Error("WebGL no disponible"); }
+
+/* ---------- Matemática mínima de matrices 4x4 (column-major) ---------- */
+const M4 = {
+  perspective(fov, asp, n, f){ const t=1/Math.tan(fov/2), r=1/(n-f);
+    return [t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)*r,-1, 0,0,2*f*n*r,0]; },
+  lookAt(e, c, u){
+    let z=norm(sub(e,c)), x=norm(cross(u,z)), y=cross(z,x);
+    return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x,e),-dot(y,e),-dot(z,e),1]; },
+  mul(a,b){ const o=new Array(16);
+    for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s;} return o; }
+};
+function sub(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function norm(a){const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l];}
+
+/* ---------- Shaders ---------- */
+function shader(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+function program(vs, fs){ const p=gl.createProgram();
+  gl.attachShader(p,shader(gl.VERTEX_SHADER,vs)); gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs)); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
+
+// Modelo: luz hemisférica + luz principal + brillo especular suave
+const meshProg = program(`
+  attribute vec3 aPos; attribute vec3 aNor; attribute vec3 aCol;
+  uniform mat4 uVP; uniform vec3 uOffset;
+  varying vec3 vNor; varying vec3 vPos; varying vec3 vCol;
+  void main(){ vec3 p=aPos+uOffset; vPos=p; vNor=aNor; vCol=aCol; gl_Position=uVP*vec4(p,1.0); }`,
+`
+  precision mediump float;
+  varying vec3 vNor; varying vec3 vPos; varying vec3 vCol;
+  uniform vec3 uColor; uniform vec3 uEye; uniform float uUseFile;
+  void main(){
+    vec3 n=normalize(vNor);
+    vec3 v=normalize(uEye-vPos);
+    if(dot(n,v)<0.0) n=-n;                       // por si el STL trae caras invertidas
+    vec3 L=normalize(vec3(0.5,-0.6,0.9));
+    float hemi=0.5+0.5*n.z;                       // cielo arriba, suelo abajo
+    vec3 amb=mix(vec3(0.20,0.19,0.18),vec3(0.42,0.45,0.50),hemi);
+    float dif=max(dot(n,L),0.0);
+    float spec=pow(max(dot(n,normalize(L+v)),0.0),48.0)*0.35;
+    float rim=pow(1.0-max(dot(n,v),0.0),3.0)*0.25;
+    vec3 base=mix(uColor,vCol,uUseFile);           // color elegido o color del archivo
+    vec3 c=base*(amb+dif*0.85)+vec3(spec+rim);
+    gl_FragColor=vec4(pow(c,vec3(1.0/1.1)),1.0);
+  }`);
+
+// Cama de impresión: rejilla de líneas
+const lineProg = program(`
+  attribute vec3 aPos; uniform mat4 uVP; varying float vD;
+  void main(){ vD=length(aPos.xy); gl_Position=uVP*vec4(aPos,1.0); }`,
+`
+  precision mediump float; uniform vec4 uColor; uniform float uR; varying float vD;
+  void main(){ gl_FragColor=vec4(uColor.rgb, uColor.a*(1.0-smoothstep(uR*0.6,uR,vD))); }`);
+
+/* ---------- Lector STL ---------- */
+function parseSTL(buf){
+  const dv=new DataView(buf);
+  // Es binario si el tamaño cuadra con 84 + n*50 bytes
+  if(buf.byteLength>=84){ const n=dv.getUint32(80,true); if(84+n*50===buf.byteLength) return parseBinary(dv,n); }
+  return parseASCII(new TextDecoder().decode(buf));
+}
+function parseBinary(dv,n){
+  const pos=new Float32Array(n*9);
+  for(let i=0;i<n;i++){ const o=84+i*50+12;
+    for(let k=0;k<9;k++) pos[i*9+k]=dv.getFloat32(o+k*4,true); }
+  return pos;
+}
+function parseASCII(txt){
+  const out=[]; const re=/vertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)/g; let m;
+  while((m=re.exec(txt))) out.push(+m[1],+m[2],+m[3]);
+  if(out.length<9) throw new Error("El archivo no parece un STL válido.");
+  return new Float32Array(out.length-out.length%9);
+}
+
+/* =========================================================
+   Lector 3MF (sin librerías)
+   Un .3mf es un ZIP con XML adentro. El navegador ya trae:
+   - DecompressionStream("deflate-raw") para descomprimir
+   - DOMParser para leer el XML
+   Colores soportados, en orden de prioridad:
+   1) Color por triángulo del estándar (basematerials / m:colorgroup)
+   2) Color asignado al objeto en el estándar (pid/pindex)
+   3) Caras pintadas en ElegooSlicer / OrcaSlicer / Bambu / Prusa (paint_color)
+   4) Filamento asignado a la pieza (Metadata/model_settings.config)
+   ========================================================= */
+const PNS="http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
+const UNITS={micron:0.001,millimeter:1,centimeter:10,inch:25.4,foot:304.8,meter:1000};
+const IDT=[1,0,0, 0,1,0, 0,0,1, 0,0,0];
+
+async function unzip(buf){
+  const dv=new DataView(buf), u8=new Uint8Array(buf), td=new TextDecoder();
+  // Busca el "fin del directorio central" desde el final del archivo
+  let e=-1;
+  for(let i=buf.byteLength-22;i>=Math.max(0,buf.byteLength-65557);i--) if(dv.getUint32(i,true)===0x06054b50){e=i;break;}
+  if(e<0) throw new Error("no es un 3MF válido (no se reconoce como ZIP).");
+  const n=dv.getUint16(e+10,true), files=new Map(); let p=dv.getUint32(e+16,true);
+  for(let i=0;i<n && dv.getUint32(p,true)===0x02014b50;i++){
+    const nl=dv.getUint16(p+28,true), el=dv.getUint16(p+30,true), cl=dv.getUint16(p+32,true);
+    const name=td.decode(u8.subarray(p+46,p+46+nl));
+    files.set(name.replace(/^\/+/,"").toLowerCase(),{method:dv.getUint16(p+10,true),size:dv.getUint32(p+20,true),off:dv.getUint32(p+42,true)});
+    p+=46+nl+el+cl;
+  }
+  async function read(path){
+    const f=files.get(path.replace(/^\/+/,"").toLowerCase()); if(!f) return null;
+    const start=f.off+30+dv.getUint16(f.off+26,true)+dv.getUint16(f.off+28,true);
+    const data=u8.subarray(start,start+f.size);
+    if(f.method===0) return td.decode(data);
+    if(f.method!==8) throw new Error("usa una compresión ZIP no soportada.");
+    if(typeof DecompressionStream==="undefined") throw new Error("tu navegador es muy antiguo para leer 3MF. Actualízalo.");
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  }
+  return {read};
+}
+
+function hexRGB(h){ if(!h) return null; h=String(h).trim().replace("#",""); if(h.length<6) return null;
+  const c=[0,2,4].map(i=>parseInt(h.substr(i,2),16)/255); return c.some(isNaN)?null:c; }
+function rgbHex(c){ return "#"+c.map(v=>Math.round(v*255).toString(16).padStart(2,"0")).join(""); }
+function parseT(s){ if(!s) return IDT; const a=s.trim().split(/\s+/).map(Number); return a.length===12&&!a.some(isNaN)?a:IDT; }
+// 3MF usa matrices 4x3 con vectores fila: aplicar "a" y luego "b"
+function compose(a,b){ const r=new Array(12);
+  for(let i=0;i<4;i++){ const w=i===3?1:0;
+    for(let j=0;j<3;j++) r[i*3+j]=a[i*3]*b[j]+a[i*3+1]*b[3+j]+a[i*3+2]*b[6+j]+w*b[9+j]; }
+  return r; }
+const kid=(el,name)=>{ for(const c of el.children) if(c.localName===name) return c; return null; };
+
+/* Pintura multicolor (formato PrusaSlicer/OrcaSlicer): árbol en hexadecimal leído al revés.
+   Cada nodo: 2 bits = lados divididos (0 = hoja), 2 bits = filamento (3 = sigue en el próximo dígito).
+   Si la cara está subdividida se toma el filamento que más se repite. 0 = color de la pieza. */
+function paintState(str){
+  const nib=[]; for(let i=str.length-1;i>=0;i--){ const v=parseInt(str[i],16); if(!isNaN(v)) nib.push(v); }
+  let i=0; const count=new Map();
+  (function node(depth){
+    if(i>=nib.length||depth>12) return;
+    const n=nib[i++], split=n&3;
+    if(split){ for(let k=0;k<=split;k++) node(depth+1); return; }
+    let st=n>>2; if(st===3&&i<nib.length) st=nib[i++]+3;
+    count.set(st,(count.get(st)||0)+1);
+  })(0);
+  let best=0,bc=-1; count.forEach((c,st)=>{ if(c>bc){bc=c;best=st;} }); return best;
+}
+
+/* Paleta de respaldo: se usa cuando el archivo dice "esta zona va con el filamento N"
+   pero no guarda de qué color es ese filamento (pasa con 3MF descargados de páginas de modelos). */
+const FALLBACK=["#ECE8DF","#4FA36B","#D9483B","#3D7CC9","#F2C14E","#2B2F33","#9C6ADE","#F08A3C","#57C4C9","#B5835A"];
+const NONE=255, UNSET=254;
+
+/* Lee los atributos de una etiqueta XML ya recortada: ' x="1" y="2"' -> {x:"1",y:"2"} */
+function attrs(s){ const o={}; const re=/([\w:]+)="([^"]*)"/g; let m; while((m=re.exec(s))) o[m[1]]=m[2]; return o; }
+
+/* Las mallas se leen con expresiones regulares en vez de DOMParser:
+   con modelos de cientos de miles de triángulos el DOM gasta mucha memoria y tiempo. */
+function parseMeshText(raw){
+  const vs=[], vre=/<(?:\w+:)?vertex\b([^>]*)>/g; let m;
+  while((m=vre.exec(raw))){ const a=attrs(m[1]); vs.push(+a.x,+a.y,+a.z); }
+  const T=[], info=[], tre=/<(?:\w+:)?triangle\b([^>]*)>/g;
+  while((m=tre.exec(raw))){ const a=attrs(m[1]); T.push(+a.v1,+a.v2,+a.v3);
+    const paint=a.paint_color||a["slic3rpe:mmu_segmentation"];
+    info.push(a.pid||a.p1!=null||paint ? {pid:a.pid,p1:a.p1,p2:a.p2,p3:a.p3,paint} : null); }
+  return {V:new Float64Array(vs),T:new Uint32Array(T),info};
+}
+
+async function parse3MF(buf){
+  const zip=await unzip(buf), dp=new DOMParser(), cache=new Map();
+  const xml=t=>{ const d=dp.parseFromString(t,"application/xml"); if(d.getElementsByTagName("parsererror").length) throw new Error("contiene XML dañado."); return d; };
+
+  // 1) Archivo principal del modelo (según _rels/.rels)
+  let rootPath="3D/3dmodel.model";
+  const rels=await zip.read("_rels/.rels");
+  if(rels) for(const r of xml(rels).getElementsByTagName("Relationship"))
+    if(/3dmodel$/i.test(r.getAttribute("Type")||"")){ rootPath=r.getAttribute("Target"); break; }
+
+  // 2) Colores de los filamentos (Elegoo/Orca/Bambu: JSON · Prusa: texto)
+  let filament=[];
+  const proj=await zip.read("Metadata/project_settings.config");
+  if(proj){ try{ const j=JSON.parse(proj); filament=j.filament_colour||j.extruder_colour||[]; }catch(e){} }
+  if(!filament.length){ const pe=await zip.read("Metadata/Slic3r_PE.config");
+    if(pe){ const ex=/;\s*extruder_colour\s*=\s*(.*)/.exec(pe), fi=/;\s*filament_colour\s*=\s*(.*)/.exec(pe);
+      const a=ex?ex[1].split(";"):[], b=fi?fi[1].split(";"):[];
+      filament=(a.length?a:b).map((c,k)=>hexRGB(c)?c:(b[k]||"")); } }
+
+  // 3) Filamento asignado a cada pieza
+  const objExt=new Map(), partExt=new Map();
+  const ms=await zip.read("Metadata/model_settings.config")||await zip.read("Metadata/Slic3r_PE_model.config");
+  if(ms) for(const o of xml(ms).getElementsByTagName("object")){
+    const id=o.getAttribute("id");
+    for(const m of o.children) if(m.localName==="metadata"&&m.getAttribute("key")==="extruder") objExt.set(id,+m.getAttribute("value"));
+    for(const part of o.getElementsByTagName("part"))
+      for(const m of part.children) if(m.localName==="metadata"&&m.getAttribute("key")==="extruder") partExt.set(id+":"+part.getAttribute("id"),+m.getAttribute("value"));
+  }
+
+  // Lee un archivo .model: las mallas se apartan como texto y el resto (pequeño) se lee con DOMParser
+  async function model(path){
+    path=path.replace(/^\/+/,"");
+    if(cache.has(path)) return cache.get(path);
+    let t=await zip.read(path); if(!t) throw new Error("le falta la parte interna "+path+".");
+    const meshes=[];
+    t=t.replace(/<((?:\w+:)?)mesh\b[^>]*>[\s\S]*?<\/\1mesh>/g, s=>{ meshes.push(s); return '<mesh ref="'+(meshes.length-1)+'"/>'; });
+    const root=xml(t).documentElement, res=kid(root,"resources"), build=kid(root,"build");
+    const groups=new Map(), objects=new Map();
+    if(res) for(const c of res.children){
+      if(c.localName==="basematerials") groups.set(c.getAttribute("id"),[...c.children].filter(x=>x.localName==="base").map(x=>hexRGB(x.getAttribute("displaycolor"))));
+      else if(c.localName==="colorgroup") groups.set(c.getAttribute("id"),[...c.children].filter(x=>x.localName==="color").map(x=>hexRGB(x.getAttribute("color"))));
+      else if(c.localName==="object") objects.set(c.getAttribute("id"),c);
+    }
+    const md={unit:UNITS[root.getAttribute("unit")||"millimeter"]||1,groups,objects,meshes,parsed:new Map(),
+      items:build?[...build.children].filter(x=>x.localName==="item"):[]};
+    cache.set(path,md); return md;
+  }
+
+  const chunks=[]; let total=0, anyInfo=objExt.size>0||partExt.size>0;
+  const pick=(g,idx)=>{ if(!g||idx==null) return null; return g[+idx]||null; };
+
+  async function emit(path,id,M,ext,rootId){
+    const md=await model(path), o=md.objects.get(id); if(!o) return;
+    const comps=kid(o,"components");
+    if(comps) for(const c of comps.children){ if(c.localName!=="component") continue;
+      const cid=c.getAttribute("objectid");
+      const cpath=c.getAttributeNS(PNS,"path")||c.getAttribute("p:path")||path;
+      await emit(cpath,cid,compose(parseT(c.getAttribute("transform")),M),partExt.get(rootId+":"+cid)||ext,rootId);
+    }
+    const mEl=kid(o,"mesh"); if(!mEl) return;
+    const ref=+mEl.getAttribute("ref");
+    if(!md.parsed.has(ref)) md.parsed.set(ref,parseMeshText(md.meshes[ref]));
+    const {V,T,info}=md.parsed.get(ref), nv=V.length/3, nt=T.length/3;
+
+    // Posiciones transformadas y normales suaves usando los índices del propio 3MF
+    const P=new Float32Array(nv*3), N=new Float32Array(nv*3);
+    for(let i=0;i<nv;i++){ const x=V[i*3], y=V[i*3+1], z=V[i*3+2];
+      P[i*3]=x*M[0]+y*M[3]+z*M[6]+M[9]; P[i*3+1]=x*M[1]+y*M[4]+z*M[7]+M[10]; P[i*3+2]=x*M[2]+y*M[5]+z*M[8]+M[11]; }
+    for(let t=0;t<nt;t++){ const a=T[t*3]*3, b=T[t*3+1]*3, c=T[t*3+2]*3;
+      const ux=P[b]-P[a], uy=P[b+1]-P[a+1], uz=P[b+2]-P[a+2], wx=P[c]-P[a], wy=P[c+1]-P[a+1], wz=P[c+2]-P[a+2];
+      const nx=uy*wz-uz*wy, ny=uz*wx-ux*wz, nz=ux*wy-uy*wx;
+      for(const j of [a,b,c]){ N[j]+=nx; N[j+1]+=ny; N[j+2]+=nz; } }
+
+    const oPid=o.getAttribute("pid"), oColor=pick(md.groups.get(oPid),o.getAttribute("pindex"));
+    const pos=new Float32Array(nt*9), nor=new Float32Array(nt*9), slot=new Uint8Array(nt*3); let direct=null;
+    for(let t=0;t<nt;t++){
+      const f=info[t]; let s=UNSET, cs=null;
+      const g=md.groups.get((f&&f.pid)||oPid);
+      if(g && f && f.p1!=null){ const c1=pick(g,f.p1); if(c1) cs=[c1,pick(g,f.p2??f.p1)||c1,pick(g,f.p3??f.p1)||c1]; }
+      if(!cs && oColor) cs=[oColor,oColor,oColor];
+      if(!cs){
+        if(f&&f.paint){ anyInfo=true; const st=paintState(f.paint); if(st>0) s=st; }
+        if(s===UNSET && ext) s=ext;
+      }
+      for(let k=0;k<3;k++){ const v=T[t*3+k]*3, o9=t*9+k*3;
+        pos[o9]=P[v]; pos[o9+1]=P[v+1]; pos[o9+2]=P[v+2];
+        const l=Math.hypot(N[v],N[v+1],N[v+2])||1; nor[o9]=N[v]/l; nor[o9+1]=N[v+1]/l; nor[o9+2]=N[v+2]/l;
+        if(cs){ if(!direct) direct=new Float32Array(nt*9); slot[t*3+k]=0; direct[o9]=cs[k][0]; direct[o9+1]=cs[k][1]; direct[o9+2]=cs[k][2]; anyInfo=true; }
+        else slot[t*3+k]=s; }
+    }
+    chunks.push({pos,nor,slot,direct}); total+=nt*9;
+  }
+
+  const root=await model(rootPath);
+  for(const it of root.items){ const id=it.getAttribute("objectid");
+    await emit(it.getAttributeNS(PNS,"path")||it.getAttribute("p:path")||rootPath,id,parseT(it.getAttribute("transform")),objExt.get(id),id); }
+  if(!total) throw new Error("no contiene piezas para mostrar.");
+
+  // Unir las piezas en un solo bloque
+  const pos=new Float32Array(total), nor=new Float32Array(total), slot=new Uint8Array(total/3); let direct=null, o=0;
+  for(const c of chunks){ pos.set(c.pos,o); nor.set(c.nor,o); slot.set(c.slot,o/3);
+    if(c.direct){ if(!direct) direct=new Float32Array(total); direct.set(c.direct,o); } o+=c.pos.length; }
+  if(root.unit!==1) for(let i=0;i<pos.length;i++) pos[i]*=root.unit;
+
+  if(!anyInfo) return {pos,smooth:nor};                       // archivo sin información de color
+  // Lo que no tenga asignación va con el filamento 1 (igual que en el laminador)
+  let maxSlot=0; const count=new Map();
+  for(let i=0;i<slot.length;i++){ let s=slot[i]; if(s===UNSET) s=slot[i]=1; if(s>0){ if(s>maxSlot)maxSlot=s; count.set(s,(count.get(s)||0)+1); } }
+  const slots=[...count.keys()].sort((a,b)=>a-b).map(k=>{
+    const fromFile=!!hexRGB(filament[k-1]);
+    return {n:k, hex:(fromFile?filament[k-1]:FALLBACK[(k-1)%FALLBACK.length]).slice(0,7).toLowerCase(), fromFile, share:count.get(k)/slot.length};
+  });
+  return {pos,smooth:nor,slot,direct,slots};
+}
+
+/* Arma el color de cada vértice a partir del filamento que le toca */
+function buildColors(){
+  const n=S.slot.length, C=S.colors&&S.colors.length===n*3?S.colors:new Float32Array(n*3), rgb=[];
+  for(const s of S.slots) rgb[s.n]=hexRGB(s.hex);
+  for(let i=0;i<n;i++){ const s=S.slot[i], j=i*3;
+    if(s===0&&S.direct){ C[j]=S.direct[j]; C[j+1]=S.direct[j+1]; C[j+2]=S.direct[j+2]; }
+    else { const c=rgb[s]||[0.8,0.8,0.8]; C[j]=c[0]; C[j+1]=c[1]; C[j+2]=c[2]; } }
+  S.colors=C;
+  gl.bindBuffer(gl.ARRAY_BUFFER,S.colBuf); gl.bufferData(gl.ARRAY_BUFFER,C,gl.STATIC_DRAW);
+}
+
+/* Normales: planas (una por cara) o suaves (promediadas entre caras que comparten vértice) */
+function faceNormals(pos){
+  const nor=new Float32Array(pos.length);
+  for(let i=0;i<pos.length;i+=9){
+    const a=[pos[i],pos[i+1],pos[i+2]], b=[pos[i+3],pos[i+4],pos[i+5]], c=[pos[i+6],pos[i+7],pos[i+8]];
+    const n=norm(cross(sub(b,a),sub(c,a)));
+    for(let k=0;k<3;k++){nor[i+k*3]=n[0];nor[i+k*3+1]=n[1];nor[i+k*3+2]=n[2];}
+  }
+  return nor;
+}
+function smoothNormals(pos, flat){
+  const map=new Map(), q=1e4, keys=new Array(pos.length/3);
+  for(let v=0;v<pos.length/3;v++){
+    const k=Math.round(pos[v*3]*q)+","+Math.round(pos[v*3+1]*q)+","+Math.round(pos[v*3+2]*q);
+    keys[v]=k; const acc=map.get(k)||[0,0,0];
+    acc[0]+=flat[v*3]; acc[1]+=flat[v*3+1]; acc[2]+=flat[v*3+2]; map.set(k,acc);
+  }
+  const nor=new Float32Array(pos.length);
+  for(let v=0;v<keys.length;v++){ const n=norm(map.get(keys[v])); nor[v*3]=n[0];nor[v*3+1]=n[1];nor[v*3+2]=n[2]; }
+  return nor;
+}
+
+/* ---------- Estado de la escena ---------- */
+const S = {
+  posBuf:gl.createBuffer(), norBuf:gl.createBuffer(), colBuf:gl.createBuffer(), count:0,
+  hasColors:false, useFile:true,
+  flat:null, smooth:null, useSmooth:true,
+  offset:[0,0,0], size:100, gridBuf:gl.createBuffer(), gridCount:0, gridR:100,
+  color:[0.914,0.894,0.847], swatch:"#e9e4d8",
+  yaw:-0.7, pitch:0.45, dist:300, target:[0,0,50], spin:true
+};
+
+function loadMesh(pos, opt, entry){
+  opt=opt||{};
+  let mn=[Infinity,Infinity,Infinity], mx=[-Infinity,-Infinity,-Infinity];
+  for(let i=0;i<pos.length;i+=3) for(let k=0;k<3;k++){ const v=pos[i+k]; if(v<mn[k])mn[k]=v; if(v>mx[k])mx[k]=v; }
+  const d=[mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]];
+  // Centrar en X/Y y apoyar sobre la cama (Z=0)
+  S.offset=[-(mn[0]+mx[0])/2, -(mn[1]+mx[1])/2, -mn[2]];
+  S.size=Math.max(d[0],d[1],d[2])||1;
+  S.flat=faceNormals(pos); S.smooth=opt.smooth||null; S.count=pos.length/3;
+  gl.bindBuffer(gl.ARRAY_BUFFER,S.posBuf); gl.bufferData(gl.ARRAY_BUFFER,pos,gl.STATIC_DRAW);
+  S.positions=pos; applyNormals();
+  // Colores del archivo; "colores" del Pokémon los reemplazan si se definieron
+  S.slot=opt.slot||null; S.direct=opt.direct||null; S.colors=null;
+  S.slots=(opt.slots||[]).map(x=>({...x, hex:(entry.colores&&entry.colores[x.n-1])||x.hex}));
+  S.hasColors=!!S.slot; S.useFile=S.hasColors;
+  if(S.hasColors) buildColors(); else S.color=hexRGB(TYPES[entry.t[0]])||S.color;
+  buildGrid(d); resetView(d);
+}
+function applyNormals(){
+  if(S.useSmooth && !S.smooth) S.smooth=smoothNormals(S.positions,S.flat);
+  gl.bindBuffer(gl.ARRAY_BUFFER,S.norBuf); gl.bufferData(gl.ARRAY_BUFFER,S.useSmooth?S.smooth:S.flat,gl.STATIC_DRAW);
+}
+function buildGrid(d){
+  // Rejilla cada 10 mm (o múltiplos si la pieza es grande)
+  const R=Math.max(d[0],d[1])*1.2+20, step=Math.pow(10,Math.max(1,Math.floor(Math.log10(R/5))));
+  const ext=Math.ceil(R/step)*step, pts=[];
+  for(let x=-ext;x<=ext+1e-6;x+=step){ pts.push(x,-ext,0, x,ext,0, -ext,x,0, ext,x,0); }
+  gl.bindBuffer(gl.ARRAY_BUFFER,S.gridBuf); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(pts),gl.STATIC_DRAW);
+  S.gridCount=pts.length/3; S.gridR=ext;
+}
+function resetView(d){
+  d=d||[S.size,S.size,S.size];
+  S.target=[0,0,d[2]/2]; S.dist=S.size*2.1; S.yaw=-0.7; S.pitch=0.45;
+}
+
+/* ---------- Dibujo ---------- */
+function eye(){
+  const cp=Math.cos(S.pitch);
+  return [S.target[0]+S.dist*cp*Math.cos(S.yaw), S.target[1]+S.dist*cp*Math.sin(S.yaw), S.target[2]+S.dist*Math.sin(S.pitch)];
+}
+function resize(){
+  const dpr=Math.min(window.devicePixelRatio||1,2), w=canvas.clientWidth*dpr|0, h=canvas.clientHeight*dpr|0;
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+  gl.viewport(0,0,w,h);
+}
+let last=performance.now();
+function frame(t){
+  const dt=Math.min(0.05,(t-last)/1000); last=t;
+  if(S.spin && !drag) S.yaw+=dt*0.35;
+  resize();
+  gl.clearColor(0.078,0.090,0.102,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+
+  const E=eye();
+  // En pantallas verticales (celular) se amplía el campo de visión para que la pieza quepa a lo ancho
+  const asp=canvas.width/canvas.height, fov=asp<1?2*Math.atan(Math.tan(0.375)/asp):0.75;
+  const VP=M4.mul(M4.perspective(fov,asp,S.size*0.01,S.size*50),M4.lookAt(E,S.target,[0,0,1]));
+
+  if(S.count){
+    gl.useProgram(meshProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(meshProg,"uVP"),false,VP);
+    gl.uniform3fv(gl.getUniformLocation(meshProg,"uOffset"),S.offset);
+    gl.uniform3fv(gl.getUniformLocation(meshProg,"uColor"),S.color);
+    gl.uniform3fv(gl.getUniformLocation(meshProg,"uEye"),E);
+    gl.uniform1f(gl.getUniformLocation(meshProg,"uUseFile"),S.hasColors&&S.useFile?1:0);
+    bindAttr(meshProg,"aPos",S.posBuf); bindAttr(meshProg,"aNor",S.norBuf);
+    const cl=gl.getAttribLocation(meshProg,"aCol");
+    if(S.hasColors) bindAttr(meshProg,"aCol",S.colBuf); else { gl.disableVertexAttribArray(cl); gl.vertexAttrib3f(cl,1,1,1); }
+    gl.drawArrays(gl.TRIANGLES,0,S.count);
+    gl.disableVertexAttribArray(gl.getAttribLocation(meshProg,"aNor")); gl.disableVertexAttribArray(cl);
+  }
+  if(S.gridCount){
+    gl.useProgram(lineProg); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg,"uVP"),false,VP);
+    gl.uniform4fv(gl.getUniformLocation(lineProg,"uColor"),[0.94,0.64,0.23,0.35]);
+    gl.uniform1f(gl.getUniformLocation(lineProg,"uR"),S.gridR);
+    bindAttr(lineProg,"aPos",S.gridBuf);
+    gl.drawArrays(gl.LINES,0,S.gridCount); gl.disable(gl.BLEND);
+  }
+  requestAnimationFrame(frame);
+}
+function bindAttr(p,name,buf){ const loc=gl.getAttribLocation(p,name); if(loc<0) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0); }
+
+/* ---------- Controles de cámara (mouse + touch con Pointer Events) ---------- */
+const pointers=new Map(); let drag=false, pinch0=0, mid0=null, panMode=false;
+canvas.addEventListener("contextmenu",e=>e.preventDefault());
+canvas.addEventListener("pointerdown",e=>{
+  canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  drag=true; panMode=(e.button===2||e.shiftKey);
+  if(pointers.size===2){ const [a,b]=[...pointers.values()]; pinch0=Math.hypot(a.x-b.x,a.y-b.y); mid0={x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }
+});
+canvas.addEventListener("pointermove",e=>{
+  if(!pointers.has(e.pointerId)) return;
+  const p=pointers.get(e.pointerId), dx=e.clientX-p.x, dy=e.clientY-p.y;
+  p.x=e.clientX; p.y=e.clientY;
+  if(pointers.size===2){
+    const [a,b]=[...pointers.values()], d=Math.hypot(a.x-b.x,a.y-b.y), mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    if(pinch0){ zoom(pinch0/d); }
+    pan(mid.x-mid0.x, mid.y-mid0.y); pinch0=d; mid0=mid; return;
+  }
+  if(panMode) pan(dx,dy);
+  else { S.yaw-=dx*0.008; S.pitch=Math.max(-1.45,Math.min(1.45,S.pitch+dy*0.008)); }
+});
+function endPointer(e){ pointers.delete(e.pointerId); if(!pointers.size) drag=false; pinch0=0; }
+canvas.addEventListener("pointerup",endPointer); canvas.addEventListener("pointercancel",endPointer);
+canvas.addEventListener("wheel",e=>{ e.preventDefault(); zoom(Math.exp(e.deltaY*0.0012)); },{passive:false});
+function zoom(f){ S.dist=Math.max(S.size*0.3,Math.min(S.size*12,S.dist*f)); }
+function pan(dx,dy){
+  const k=S.dist*0.0016, E=eye(), fwd=norm(sub(S.target,E)), right=norm(cross(fwd,[0,0,1])), up=cross(right,fwd);
+  for(let i=0;i<3;i++) S.target[i]+=(-dx*right[i]+dy*up[i])*k;
+}
+
+/* ---------- Datos de la Pokédex ----------
+   El modelo 3D se busca solo en la carpeta modelos/ con el nombre del Pokémon
+   en minúsculas:  modelos/bulbasaur.3mf  (si no existe, prueba modelos/bulbasaur.stl)
+   colores: color de cada filamento (1, 2, 3…), solo si el archivo no los trae
+   modelo:  opcional, para usar otra ruta distinta a la automática */
+const TYPES = {
+  planta:"#7fd16b", veneno:"#b98ae0", fuego:"#ff9d5c", agua:"#6fb6ff", eléctrico:"#ffd84a",
+  normal:"#c9c4b0", hada:"#f5a8d4", lucha:"#e07a5f", fantasma:"#9a8ad8", roca:"#c9b26b",
+  tierra:"#d8b47a", dragón:"#8f9cff", volador:"#a9c8ff", psíquico:"#ff8fb1"
+};
+const DEX = [
+  {n:1, colores:["#7CC7B2","#3F8F7F","#5BAA5E","#F4F4F0","#C83A3F","#3B1E26"],
+   img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/001.png",
+   name:"Bulbasaur",cat:"Pokémon Semilla",t:["planta","veneno"],h:0.7,w:6.9,s:[45,49,49,65,65,45],d:"Lleva un bulbo en el lomo que absorbe la luz del sol. Cuanto más luz recibe, más crece."},
+  {n:4, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/004.png",
+   name:"Charmander",cat:"Pokémon Lagartija",t:["fuego"],h:0.6,w:8.5,s:[39,52,43,60,50,65],d:"La llama de su cola refleja su estado de ánimo y su salud. Si se apaga, es mala señal."},
+  {n:7, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/007.png",
+   name:"Squirtle",cat:"Pokémon Tortuguita",t:["agua"],h:0.5,w:9.0,s:[44,48,65,50,64,43],d:"Se refugia en su caparazón para protegerse y lanza chorros de agua a presión."},
+  {n:25, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/025.png",
+   name:"Pikachu",cat:"Pokémon Ratón",t:["eléctrico"],h:0.4,w:6.0,s:[35,55,40,50,50,90],d:"Acumula electricidad en las bolsas de sus mejillas y la descarga cuando se siente amenazado."},
+  {n:39, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/039.png",
+   name:"Jigglypuff",cat:"Pokémon Globo",t:["normal","hada"],h:0.5,w:5.5,s:[115,45,20,45,25,20],d:"Su canto adormece a quien lo escucha. Se infla como un globo para cantar más tiempo."},
+  {n:54, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/054.png",
+   name:"Psyduck",cat:"Pokémon Pato",t:["agua"],h:0.8,w:19.6,s:[50,52,48,65,50,55],d:"Sufre dolores de cabeza constantes. Cuando empeoran, libera poderes que no recuerda después."},
+  {n:66, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/066.png",
+   name:"Machop",cat:"Pokémon Superpoder",t:["lucha"],h:0.8,w:19.5,s:[70,80,50,35,35,35],d:"Entrena todo el día levantando objetos pesados. Su cuerpo es puro músculo."},
+  {n:92, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/092.png",
+   name:"Gastly",cat:"Pokémon Gas",t:["fantasma","veneno"],h:1.3,w:0.1,s:[30,35,30,100,35,80],d:"Su cuerpo es casi todo gas. Un viento fuerte basta para dispersarlo."},
+  {n:95, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/095.png",
+   name:"Onix",cat:"Pokémon Serpiente Roca",t:["roca","tierra"],h:8.8,w:210.0,s:[35,45,160,30,45,70],d:"Excava túneles bajo tierra a gran velocidad. Su cuerpo de roca se endurece con los años."},
+  {n:133, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/133.png",
+   name:"Eevee",cat:"Pokémon Evolución",t:["normal"],h:0.3,w:6.5,s:[55,55,50,45,65,55],d:"Su código genético es inestable, por lo que puede evolucionar de muchas formas distintas."},
+  {n:143, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/143.png",
+   name:"Snorlax",cat:"Pokémon Dormir",t:["normal"],h:2.1,w:460.0,s:[160,110,65,65,110,30],d:"Solo despierta para comer. Después de comer, vuelve a dormirse de inmediato."},
+  {n:149, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/149.png",
+   name:"Dragonite",cat:"Pokémon Dragón",t:["dragón","volador"],h:2.2,w:210.0,s:[91,134,95,100,100,80],d:"Puede rodear el planeta en pocas horas. Se dice que ayuda a los náufragos."},
+  {n:150, img:"https://www.pokemon.com/static-assets/content-assets/cms2/img/pokedex/full/150.png",
+   name:"Mewtwo",cat:"Pokémon Genético",t:["psíquico"],h:2.0,w:122.0,s:[106,110,90,154,90,130],d:"Fue creado mediante manipulación genética. Tiene un poder psíquico enorme."}
+];
+const LABELS=["PS","Ataque","Defensa","At. Esp.","Def. Esp.","Velocidad"];
+const slug=t=>t.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-");
+const fmt=(v,u)=>v.toLocaleString("es-CO",{minimumFractionDigits:1,maximumFractionDigits:1})+" "+u;
+
+/* El Pokémon se elige por la URL: ?p=bulbasaur  o  ?p=1
+   Sin ?p= se muestra el primero de la lista. */
+function fromURL(){
+  const q=(new URLSearchParams(location.search).get("p")||"").trim();
+  if(!q){ showEmpty("No indicaste ningún Pokémon en la dirección. Agrega ?p= y el nombre o el número al final del enlace, por ejemplo ?p=bulbasaur o ?p=25."); return null; }
+  const n=parseInt(q,10);
+  const i=DEX.findIndex(p=>(/^\d+$/.test(q)&&p.n===n)||slug(p.name)===slug(q));
+  if(i>=0) return DEX[i];
+  showEmpty("No encontré «"+q+"» en la Pokédex. Revisa el nombre o elige uno de la lista.");
+  return null;
+}
+
+/* Panel cuando la URL no trae un Pokémon válido: mensaje + enlaces a los disponibles */
+function showEmpty(text){
+  $("dexNo").textContent="Pokédex 3D";
+  $("title").textContent="¿Qué Pokémon quieres ver?";
+  $("cat").textContent="";
+  $("emptyMsg").textContent=text;
+  $("links").innerHTML=DEX.map(p=>'<a href="?p='+slug(p.name)+'">'+String(p.n).padStart(3,"0")+' '+p.name+'</a>').join("");
+  $("empty").hidden=false;
+  ["types","desc","statRows"].forEach(id=>$(id).hidden=true);
+  document.querySelector(".panel dl").hidden=true; document.querySelector(".panel .stats").hidden=true;
+  document.querySelector(".panel .hint").hidden=true;
+}
+
+function showInfo(p){
+  $("dexNo").textContent="Nº "+String(p.n).padStart(3,"0");
+  $("title").textContent=p.name; $("cat").textContent=p.cat;
+  $("types").innerHTML=p.t.map(t=>'<span class="type" style="background:'+TYPES[t]+'">'+t+'</span>').join("");
+  $("desc").textContent=p.d;
+  $("height").textContent=fmt(p.h,"m"); $("weight").textContent=fmt(p.w,"kg");
+  $("total").textContent="Total "+p.s.reduce((a,b)=>a+b,0);
+  $("statRows").innerHTML=p.s.map((v,i)=>'<div class="srow"><span>'+LABELS[i]+'</span><span>'+v+'</span><div class="bar"><i style="width:'+Math.min(100,v/180*100)+'%"></i></div></div>').join("");
+  document.title=p.name+" · Pokédex 3D";
+}
+
+const P=fromURL();
+if(P){ showInfo(P);
+S.spin=true;                                    // gira siempre
+
+/* Busca el archivo: la ruta "modelo" si se escribió; si no, nombre.3mf y luego nombre.stl
+   (en minúsculas o con la primera letra en mayúscula) */
+const low="modelos/"+slug(P.name), cap="modelos/"+P.name;      // bulbasaur.3mf o Bulbasaur.3mf
+const candidates=P.modelo?[P.modelo]:[low+".3mf",cap+".3mf",low+".stl",cap+".stl"];
+async function findModel(){
+  for(const path of candidates){
+    const r=await fetch(path).catch(()=>null);
+    if(r&&r.ok) return {path,buf:await r.arrayBuffer()};
+  }
+  return null;
+}
+findModel().then(async f=>{
+  if(!f){ $("msg").textContent=location.protocol==="file:"
+      ? "Abriste la página con doble clic. Ábrela desde Laragon (http://localhost/visor3d/) para ver el modelo."
+      : "Aún no hay modelo 3D. Agrega el archivo "+candidates[0]+" al proyecto.";
+    return; }
+  if(/\.3mf$/i.test(f.path)){ const r=await parse3MF(f.buf); loadMesh(r.pos,r,P); }
+  else loadMesh(parseSTL(f.buf),{},P);
+}).catch(err=>{ $("msg").textContent="El archivo del modelo no se pudo leer: "+err.message; });
+
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
