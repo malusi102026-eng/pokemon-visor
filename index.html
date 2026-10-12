@@ -67,6 +67,28 @@ input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
 .links{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .links a{font-family:var(--f-mono);font-size:12px;color:var(--fg);text-decoration:none;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 .links a:hover{border-color:var(--accent);color:var(--accent)}
+/* Indicador de carga: lente de escaneo con anillos girando + barra de progreso */
+.loader{position:fixed;inset:0;display:grid;place-content:center;justify-items:center;gap:18px;pointer-events:none;
+  transition:opacity .45s ease;z-index:5}
+.loader.out{opacity:0}
+.orb{position:relative;width:120px;height:120px}
+.orb .core{position:absolute;inset:34px;border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#e8fbff,#58c6e6 38%,#14607a 78%);
+  box-shadow:0 0 24px rgba(88,198,230,.65),inset 0 0 0 4px #e7ebe8;animation:pulse 1.4s ease-in-out infinite}
+.orb .ring{position:absolute;inset:0;border-radius:50%;border:3px solid transparent}
+.orb .r1{border-top-color:var(--accent);border-right-color:var(--accent);animation:spin 1.1s linear infinite}
+.orb .r2{inset:14px;border-bottom-color:#58c6e6;border-left-color:#58c6e6;animation:spin 1.6s linear infinite reverse;opacity:.8}
+.orb .tick{position:absolute;left:50%;top:-6px;width:4px;height:12px;margin-left:-2px;border-radius:2px;background:var(--accent);
+  transform-origin:2px 66px;animation:spin 1.1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{50%{transform:scale(.9);box-shadow:0 0 10px rgba(88,198,230,.35),inset 0 0 0 4px #e7ebe8}}
+.ltxt{margin:0;font-family:var(--f-mono);font-size:12px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-variant-numeric:tabular-nums}
+.pbar{width:180px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:var(--accent);border-radius:2px;transition:width .2s ease}
+.pbar.indet i{width:35%;animation:indet 1.2s ease-in-out infinite}
+@keyframes indet{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+@media (max-width:600px){ .loader{place-content:start center;padding-top:22vh} }
+@media (prefers-reduced-motion:reduce){ .orb *{animation-duration:3s!important} }
 .drop{position:fixed;inset:12px;border:2px dashed var(--accent);border-radius:16px;display:grid;place-items:center;
   font-size:18px;font-weight:600;color:var(--accent);background:rgba(20,23,26,.7);pointer-events:none}
 
@@ -80,6 +102,11 @@ input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
 <body>
 <canvas id="gl" aria-label="Vista 3D del modelo. Arrastra para girar, rueda o pellizco para acercar."></canvas>
 
+<div class="loader" id="loader" role="status" aria-live="polite" hidden>
+  <div class="orb" aria-hidden="true"><i class="ring r1"></i><i class="ring r2"></i><i class="tick"></i><i class="core"></i></div>
+  <p class="ltxt" id="ltxt">Buscando modelo…</p>
+  <div class="pbar indet" id="pbar"><i id="pfill"></i></div>
+</div>
 <aside class="panel">
   <div>
     <p class="eyebrow" id="dexNo">Nº 000</p>
@@ -640,21 +667,49 @@ S.spin=true;                                    // gira siempre
    (en minúsculas o con la primera letra en mayúscula) */
 const low="modelos/"+slug(P.name), cap="modelos/"+P.name;      // bulbasaur.3mf o Bulbasaur.3mf
 const candidates=P.modelo?[P.modelo]:[low+".3mf",cap+".3mf",low+".stl",cap+".stl"];
+/* ---------- Indicador de carga ---------- */
+const loader={
+  show(t){ $("loader").hidden=false; $("loader").classList.remove("out"); this.text(t); this.indet(); },
+  text(t){ $("ltxt").textContent=t; },
+  indet(){ $("pbar").classList.add("indet"); $("pfill").style.width=""; },
+  pct(p){ $("pbar").classList.remove("indet"); $("pfill").style.width=Math.round(p*100)+"%";
+          this.text("Descargando "+Math.round(p*100)+" %"); },
+  hide(){ $("loader").classList.add("out"); setTimeout(()=>{ $("loader").hidden=true; },460); }
+};
+const nextFrame=()=>new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+
+/* Descarga leyendo por partes para poder mostrar el porcentaje */
+async function download(r){
+  const total=+r.headers.get("Content-Length")||0;
+  if(!r.body||!total){ loader.text("Descargando…"); return r.arrayBuffer(); }
+  const reader=r.body.getReader(), out=new Uint8Array(total); let got=0;
+  for(;;){ const {done,value}=await reader.read(); if(done) break;
+    if(got+value.length>out.length){ return new Blob([out.subarray(0,got),value]).arrayBuffer(); } // tamaño real distinto (compresión)
+    out.set(value,got); got+=value.length; loader.pct(got/total); }
+  return out.buffer.slice(0,got);
+}
+
 async function findModel(){
   for(const path of candidates){
     const r=await fetch(path).catch(()=>null);
-    if(r&&r.ok) return {path,buf:await r.arrayBuffer()};
+    if(r&&r.ok) return {path,buf:await download(r)};
   }
   return null;
 }
+
+loader.show("Buscando modelo…");
 findModel().then(async f=>{
-  if(!f){ $("msg").textContent=location.protocol==="file:"
+  if(!f){ loader.hide();
+    $("msg").textContent=location.protocol==="file:"
       ? "Abriste la página con doble clic. Ábrela desde Laragon (http://localhost/visor3d/) para ver el modelo."
       : "Aún no hay modelo 3D. Agrega el archivo "+candidates[0]+" al proyecto.";
     return; }
+  loader.indet(); loader.text("Procesando modelo…");
+  await nextFrame();                               // deja que el texto se pinte antes del trabajo pesado
   if(/\.3mf$/i.test(f.path)){ const r=await parse3MF(f.buf); loadMesh(r.pos,r,P); }
   else loadMesh(parseSTL(f.buf),{},P);
-}).catch(err=>{ $("msg").textContent="El archivo del modelo no se pudo leer: "+err.message; });
+  loader.hide();
+}).catch(err=>{ loader.hide(); $("msg").textContent="El archivo del modelo no se pudo leer: "+err.message; });
 
 }
 
